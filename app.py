@@ -30,8 +30,13 @@ from flask import Flask, jsonify, request
 
 import audit
 import config
+import stylometry
 
 app = Flask(__name__)
+
+# Input bounds for /submit — the contract in milestone1.md.
+MIN_TEXT_WORDS = 30
+MAX_TEXT_CHARS = 20_000
 
 
 # ── Rate limiting — UNIT 8 ────────────────────────────────────────────────────
@@ -199,38 +204,70 @@ def submit():
     what should this do when `text` is missing, empty, or enormous? A crash on
     a malformed input is one of the most common real failures there is.
     """
-    payload = request.get_json(silent=True) or {}
+    payload = request.get_json(silent=True)
+
+    # Step 2 - JSON goes in: pull text and creator_id out of the body.
+    # Every check runs BEFORE any signal, so bad input is a 4xx, never a 500.
+    if not isinstance(payload, dict):
+        return _reject("unknown", "invalid_json", "Send a JSON object with a \"text\" field.")
+
     text = payload.get("text")
     creator_id = payload.get("creator_id", "unknown")
+
+    if not isinstance(creator_id, str) or not creator_id.strip() or len(creator_id) > 64:
+        return _reject("unknown", "invalid_creator_id", "\"creator_id\" must be a string of 1-64 characters.")
+    if not isinstance(text, str) or not text.strip():
+        return _reject(creator_id, "missing_text", "Send JSON with a non-empty \"text\".")
+    text = text.strip()
+    if len(text) > MAX_TEXT_CHARS:
+        return _reject(creator_id, "text_too_long", f"Text is over {MAX_TEXT_CHARS:,} characters.", 413)
+    if len(stylometry.words(text)) < MIN_TEXT_WORDS:
+        return _reject(creator_id, "text_too_short",
+                       f"Send at least {MIN_TEXT_WORDS} words — anything shorter is too little to judge.")
 
     # Step 3 - one real signal that we first tested from the terminal
     # python detector.py "some text"
     import detector
-    model_score = detector.model_signal(text)
+    try:
+        model_score = detector.model_signal(text)
+    except detector.DetectorUnavailable:
+        return _reject(creator_id, "detector_unavailable", "The detector model isn't loaded. Try again shortly.", 503)
+    except ValueError:
+        # The word check above should catch this first; this is the backstop.
+        return _reject(creator_id, "text_too_short", "Text is too short to score.")
 
-    # Step 2 - JSON goes in: pull text and creator_id out of the body
-    if not isinstance(text, str) or not text.strip():
-        return jsonify({"error": "bad_request", "message": "Send JSON with a non-empty \"text\"."}), 400
+    # Placeholders until Milestones 4 and 5.
+    guess = "unsure"
+    label = "not built yet"
 
-    # Step 4 - log the decision. The content_id is what /appeal needs later.
+    # Step 4 - log the decision. The content_id is what /appeal needs later,
+    # so the response hands back this exact id.
     content_id = f"c_{uuid.uuid4().hex[:12]}"
     audit.log_decision(
         content_id=content_id,
         creator_id=creator_id,
+        guess=guess,
         model_score=model_score,
+        label=label,
         status="decided",
     )
 
-    # Step 1 - the route answers. Hardcoded without any logic yet
     return jsonify({
-        "content_id": "hardcoded",
+        "content_id": content_id,
         "creator_id": creator_id,
-        "guess": "unsure",
+        "guess": guess,
         "confidence": model_score,
-        "label": "not built yet",
+        "label": label,
         "model_score": model_score,
         "style_score": None,
+        "status": "decided",
     }), 200
+
+
+def _reject(creator_id: str, error: str, message: str, status: int = 400):
+    """Refuse a request, and leave a trace of it in the log."""
+    audit.log_rejection(creator_id=creator_id, reason=error)
+    return jsonify({"error": error, "message": message}), status
 
 
 @app.post("/appeal")
