@@ -209,16 +209,40 @@ will go through.
 
 | Label | Score range | The exact text a reader sees |
 |---|---|---|
-| high-confidence human |  |  |
-| unsure |  |  |
-| high-confidence AI |  |  |
+| high-confidence human | 0.00 – 0.35 | We think this was most likely written by a person. |
+| unsure | 0.35 – 0.72 | We can't tell who or what wrote this. Some things about it are common in machine-written text, but they're just as common in clear, simple writing by people. This is not a finding that AI was used. |
+| high-confidence AI | 0.72 – 1.00 | Both of our checks found patterns that are common in machine-written text. That isn't proof — plain writing by people can look like this too. If you wrote this yourself, you can ask for a person to review it. |
+
+A score exactly on a boundary takes the outer label: 0.35 is human and 0.72
+is AI. That way the three ranges cover 0–1 with no gap. The text lives in
+`scoring.py` as `LABEL_HUMAN`, `LABEL_UNSURE` and `LABEL_AI`.
+
+All three are reachable. Submitted through `/submit`:
+
+| Input | combined | Label |
+|---|---|---|
+| `samples/clearly_human.json` | 0.1232 | high-confidence human |
+| `samples/plain_human.json` | 0.6905 | unsure |
+| `samples/clearly_ai.json` | 0.7544 | high-confidence AI |
 
 **Why I worded the "unsure" one this way:**
-<!-- It's the hardest of the three. It has to admit uncertainty without
-     sounding like an accusation, because the person reading it may well have
-     written every word themselves. -->
+The writer most likely to get "unsure" is the plain writer from my false
+positive trace. `plain_human.json` lands here, and it was written by a person.
+So the label does three things:
 
+- **It admits the uncertainty first.** "We can't tell" comes before anything
+  else.
+- **It names the real reason.** It says the patterns are "just as common in
+  clear, simple writing by people", so a writer who writes simply reads
+  something that describes them, not something that suspects them.
+- **It ends by denying the accusation outright.** "This is not a finding
+  that AI was used" is the sentence I'd want to read first if I'd written
+  every word myself.
 
+I left out any "you can appeal" line here on purpose. Offering an appeal
+implies there's something to appeal against. That line belongs on the AI
+label, which is the only one that comes close to an accusation, and even that
+one says "isn't proof".
 
 ---
 
@@ -226,6 +250,9 @@ will go through.
 
 <!-- One submission and one appeal, pasted as text: the request, the response,
      and the log entries. -->
+
+Run against `python app.py` on 127.0.0.1:5000, 2026-11-04 (UTC). The body is
+`samples/clearly_ai.json`.
 
 **A submission**
 
@@ -237,11 +264,25 @@ will go through.
 ```bash
 $ curl -X POST http://127.0.0.1:5000/submit \
   -H "Content-Type: application/json" \
-  -d '{"text": "...", "creator_id": "..."}'
+  -d @samples/clearly_ai.json
 ```
 
-```json
+`samples/clearly_ai.json` is `{"text": "The importance of effective time
+management cannot be overstated in today's fast-paced work environment. …
+Finally, regular breaks are important for maintaining performance.",
+"creator_id": "demo_instructor"}`.
 
+```json
+{
+    "confidence": 0.7544,
+    "content_id": "c_4ce4d3a157d1",
+    "creator_id": "demo_instructor",
+    "guess": "ai",
+    "label": "Both of our checks found patterns that are common in machine-written text. That isn't proof \u2014 plain writing by people can look like this too. If you wrote this yourself, you can ask for a person to review it.",
+    "model_score": 0.7544,
+    "status": "decided",
+    "style_score": 0.8113
+}
 ```
 
 **An appeal**
@@ -249,22 +290,65 @@ $ curl -X POST http://127.0.0.1:5000/submit \
 ```bash
 $ curl -X POST http://127.0.0.1:5000/appeal \
   -H "Content-Type: application/json" \
-  -d '{"content_id": "...", "reasoning": "..."}'
+  -d '{"content_id": "c_4ce4d3a157d1", "reasoning": "I wrote this myself for a workplace newsletter. I can share my drafts."}'
 ```
 
 ```json
-
+{
+    "content_id": "c_4ce4d3a157d1",
+    "message": "Thanks \u2014 a person will look at this. Your original result is on hold until then.",
+    "status": "under_review"
+}
 ```
 
 **What the log shows afterwards**
 
 ```bash
-$ curl "http://127.0.0.1:5000/log?limit=3"
+$ curl "http://127.0.0.1:5000/log?limit=2"
 ```
 
 ```json
-
+{
+    "count": 2,
+    "entries": [
+        {
+            "combined_score": 0.7544,
+            "content_id": "c_4ce4d3a157d1",
+            "creator_id": "demo_instructor",
+            "guess": "ai",
+            "label": "Both of our checks found patterns that are common in machine-written text. That isn't proof \u2014 plain writing by people can look like this too. If you wrote this yourself, you can ask for a person to review it.",
+            "model_score": 0.7544,
+            "status": "decided",
+            "style_score": 0.8113,
+            "timestamp": "2026-11-04T05:48:39+00:00"
+        },
+        {
+            "content_id": "c_4ce4d3a157d1",
+            "creator_id": "demo_instructor",
+            "event": "appeal",
+            "reasoning": "I wrote this myself for a workplace newsletter. I can share my drafts.",
+            "status": "under_review",
+            "timestamp": "2026-11-04T05:48:44+00:00"
+        }
+    ]
+}
 ```
+
+The original decision is untouched, and the appeal sits right after it with
+`status: "under_review"`. The `creator_id` on the appeal was copied from the
+decision, not taken from the request.
+
+Other appeal paths, checked with Flask's test client:
+
+| Request | Status | `error` |
+|---|---|---|
+| the same `content_id` a second time | 409 | `already_under_review` |
+| a made-up `content_id` (`c_nope`) | 404 | `unknown_content_id` |
+| no `reasoning` | 400 | `missing_reasoning` |
+| no `content_id` | 400 | `missing_content_id` |
+| body is a JSON list | 400 | `invalid_json` |
+
+Each one also left a `rejected` entry in the log.
 
 ---
 

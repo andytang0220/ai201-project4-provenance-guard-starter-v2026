@@ -38,6 +38,7 @@ app = Flask(__name__)
 # Input bounds for /submit — the contract in milestone1.md.
 MIN_TEXT_WORDS = 30
 MAX_TEXT_CHARS = 20_000
+MAX_REASONING_CHARS = 5_000
 
 
 # ── Rate limiting — UNIT 8 ────────────────────────────────────────────────────
@@ -242,9 +243,8 @@ def submit():
     style_score = stylometry.style_signal(text)
     combined_score = scoring.combine_signals(model_score, style_score)
 
-    # Placeholders until Milestone 5.
-    guess = "unsure"
-    label = "not built yet"
+    # Milestone 5 - the label a reader sees.
+    guess, label = scoring.score_to_label(combined_score)
 
     # Step 4 - log the decision. The content_id is what /appeal needs later,
     # so the response hands back this exact id.
@@ -272,9 +272,9 @@ def submit():
     }), 200
 
 
-def _reject(creator_id: str, error: str, message: str, status: int = 400):
+def _reject(creator_id: str, error: str, message: str, status: int = 400, **extra):
     """Refuse a request, and leave a trace of it in the log."""
-    audit.log_rejection(creator_id=creator_id, reason=error)
+    audit.log_rejection(creator_id=creator_id, reason=error, **extra)
     return jsonify({"error": error, "message": message}), status
 
 
@@ -298,14 +298,45 @@ def appeal():
     to the person on the other end. It's the only thing standing between a
     wrong accusation and nothing at all.
     """
-    payload = request.get_json(silent=True) or {}
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return _reject("unknown", "invalid_json", "Send a JSON object with \"content_id\" and \"reasoning\".",
+                       route="appeal")
 
-    # TODO: delete this and build the route.
+    content_id = payload.get("content_id")
+    reasoning = payload.get("reasoning")
+
+    if not isinstance(content_id, str) or not content_id.strip():
+        return _reject("unknown", "missing_content_id", "Send the \"content_id\" your result came with.",
+                       route="appeal")
+    if not isinstance(reasoning, str) or not reasoning.strip() or len(reasoning) > MAX_REASONING_CHARS:
+        return _reject("unknown", "missing_reasoning",
+                       f"Tell us why in \"reasoning\" — 1 to {MAX_REASONING_CHARS:,} characters.",
+                       route="appeal")
+    content_id = content_id.strip()
+
+    # 1. The id has to match a real decision — a typo is a visible 404, never
+    #    a silent success. Decisions are the entries with no "event".
+    history = audit.entries_for(content_id)
+    decision = next((e for e in history if "event" not in e), None)
+    if decision is None:
+        return _reject("unknown", "unknown_content_id", "We have no result with that content_id.", 404,
+                       route="appeal", appealed_id=content_id)
+    if history[-1].get("status") == "under_review":
+        return _reject(decision["creator_id"], "already_under_review",
+                       "This result is already waiting for a person to review it.", 409,
+                       route="appeal", appealed_id=content_id)
+
+    # 2. Append, never overwrite: the original decision stays where it was.
+    #    The creator_id comes from that decision, not from the request.
+    audit.log_appeal(content_id=content_id, creator_id=decision["creator_id"], reasoning=reasoning.strip())
+
+    # 3. Confirm to the writer.
     return jsonify({
-        "error": "not_implemented",
-        "message": "POST /appeal isn't built yet — see the TODO in app.py.",
-        "you_sent": payload,
-    }), 501
+        "content_id": content_id,
+        "status": "under_review",
+        "message": "Thanks — a person will look at this. Your original result is on hold until then.",
+    }), 200
 
 
 # ── Already works ─────────────────────────────────────────────────────────────

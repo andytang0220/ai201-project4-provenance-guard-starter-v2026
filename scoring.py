@@ -94,13 +94,31 @@ def score_to_label(score: float) -> tuple[str, str]:
     written every word themselves. Your breakout asks your group what they'd
     think if they got it on their own work. That question is the whole
     milestone.
+
+    Boundaries: a score exactly on a threshold takes the outer band, so the
+    three ranges cover 0–1 with no gap.
     """
-    # TODO: replace this — thresholds are in config.py
     if score >= config.AI_THRESHOLD:
-        return "ai", "PLACEHOLDER — write the high-confidence AI label."
+        return "ai", LABEL_AI
     if score <= config.HUMAN_THRESHOLD:
-        return "human", "PLACEHOLDER — write the high-confidence human label."
-    return "unsure", "PLACEHOLDER — write the unsure label."
+        return "human", LABEL_HUMAN
+    return "unsure", LABEL_UNSURE
+
+
+# What a reader sees. Each one talks about the writing, never about the person.
+LABEL_HUMAN = "We think this was most likely written by a person."
+
+LABEL_UNSURE = (
+    "We can't tell who or what wrote this. Some things about it are common in "
+    "machine-written text, but they're just as common in clear, simple writing "
+    "by people. This is not a finding that AI was used."
+)
+
+LABEL_AI = (
+    "Both of our checks found patterns that are common in machine-written text. "
+    "That isn't proof — plain writing by people can look like this too. If you "
+    "wrote this yourself, you can ask for a person to review it."
+)
 
 
 def label_ranges() -> list[tuple[str, str]]:
