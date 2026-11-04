@@ -39,6 +39,41 @@
 <!-- The path a submission takes, from arriving to the label a reader sees.
      Six or seven steps — this is the trace you wrote in Milestone 1. -->
 
+Provenance Guard takes a piece of writing, guesses whether a person or a
+machine wrote it, and tells the reader in plain words. A writer who thinks the
+guess is wrong can appeal. Here is the path one submission takes through
+`POST /submit`:
+
+1. **Flask receives the request.** It turns the JSON body into a Python dict.
+   *Adds:* a structured payload. (In unit 8 the rate limiter runs here,
+   before the handler.)
+2. **`app.py::submit` checks the input and creates an id.** `text` must be a
+   string of at least 30 words and at most 20,000 characters, and
+   `creator_id`, if sent, must be a string of 1–64 characters. Anything else
+   gets a 400 or 413 with a JSON error, plus a `rejected` entry in the log,
+   and never reaches a signal. *Adds:* the guarantee that every step below
+   gets usable text, and a `content_id` (`c_` + 12 hex characters) that the
+   log, the response and any appeal all share.
+3. **`detector.py::model_signal` (signal one).** gpt2 reads the first 400
+   tokens and measures perplexity, i.e. how predictable the text is. That is
+   mapped onto 0–1. *Adds:* `model_score`, where higher means more AI-like.
+4. **`stylometry.py::style_signal` (signal two).** It measures the text's
+   shape without reading it: sentence-length spread, word variety and
+   punctuation. Each measure is scaled to 0–1 and averaged. *Adds:*
+   `style_score`, where higher means more AI-like.
+5. **`scoring.py::combine_signals`.** It takes the lower of the two scores,
+   so a text only counts as AI-like if both signals say so. *Adds:* the
+   combined score, which the response returns as `confidence`.
+6. **`scoring.py::score_to_label`.** The combined score is put into a band:
+   human up to 0.35, unsure in between, AI from 0.72. *Adds:* `guess`
+   (`human` / `unsure` / `ai`) and the full sentence the reader sees. This is
+   the first step that writes for a person instead of a machine.
+7. **`audit.py::log_decision`, then the response.** One JSON line goes into
+   `logs/audit.jsonl` with both signal scores, the combined score, the guess,
+   the label and `status: "decided"`. The same fields go back to the caller.
+   *Adds:* a permanent record. The reader sees the label, and the
+   `content_id` is what they send to `POST /appeal`, which moves the item to
+   `under_review` without overwriting the original decision.
 
 
 ---
