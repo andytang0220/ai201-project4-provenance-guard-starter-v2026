@@ -53,19 +53,67 @@
 
 ### Signal one — the model signal
 
-**What it measures:**
+**What it measures:** How predictable the text is to a language model.
+`detector.py` runs gpt2 locally over the first 400 tokens and computes
+perplexity, which is how surprised the model is by each next token. A
+logistic curve centred on perplexity 45 maps that onto 0–1, so low
+perplexity gives a high score (more AI-like).
 
-**Why that might differ between human and AI writing:**
+**Why that might differ between human and AI writing:** A language model
+writes by picking high-probability next tokens over and over, so its output
+sits where another language model finds it easy to predict. People make
+choices a model wouldn't, such as an odd word, a specific name or a sudden
+turn, and each one costs perplexity.
 
-**What it can't see:**
+**What it can't see:** Who wrote the text. It measures predictability, and
+plenty of people write predictably. Second-language writers, younger writers
+and anyone writing plainly on purpose all score as AI. Measured on this
+machine:
+
+| Text | Perplexity | `model_score` |
+|---|---|---|
+| `samples/clearly_ai.json` | 22.3 | 0.7544 |
+| a plain human paragraph (written in the style of a second-language writer) | 19.4 | **0.7936** |
+| `samples/clearly_human.json` | 59.2 | 0.3923 |
+
+The plain human paragraph scores *more* AI-like than the AI sample, so no
+threshold on this signal alone separates them. It is blind the other way too.
+Rare words, jargon, proper nouns and typos raise perplexity, so AI text with
+unusual vocabulary or a few misspellings reads as human. And it only reads the
+first 400 tokens (about 300 words).
 
 ### Signal two — the style signal
 
-**What it measures:**
+**What it measures:** The text's shape, without reading it. `stylometry.py`
+uses three measures:
 
-**Why that might differ between human and AI writing:**
+- **Sentence-length spread:** the standard deviation of words per sentence
+  divided by the mean. Low spread is flipped to mean more AI-like.
+- **Type-token ratio:** unique words over total words, on a fixed-size window
+  so length doesn't decide it. Low variety is flipped to mean more AI-like.
+- **Punctuation density:** non-full-stop punctuation (`, ; : — ( ) ! ? "`)
+  per 100 words, plus how many distinct kinds appear. Low density and variety
+  are flipped to mean more AI-like.
 
-**What it can't see:**
+Each measure is clipped, scaled to 0–1 and averaged into `style_score`, where
+higher means more AI-like, the same direction as signal one.
+
+**Why that might differ between human and AI writing:** Generated prose tends
+toward even, mid-length sentences, safe vocabulary and regular punctuation,
+because that's what "most likely next token" produces on average. Human
+writing is lumpier. `clearly_human.json` puts "Twice now." (2 words) next to
+a sentence of about 40, and uses dashes, a colon and quotation marks.
+
+**What it can't see:** Meaning. It has no idea what the text says, so any
+edit that changes the shape without changing the substance moves it.
+Splitting sentences, adding a fragment, inserting typos (which raise
+type-token ratio) or pasting a quotation all push the score toward human, and
+all of them are cheap to do on purpose. It also shares signal one's blind
+spot. Plain writing has even sentence lengths, repeated simple words and only
+full stops, so the writer signal one wrongly accuses is likely to be accused
+here too, and the two signals agree when they're wrong. Short texts are noise:
+one sentence has no spread at all. And because modern chat models use em
+dashes heavily, "varied punctuation means human" may already be out of date.
 
 ### The combining rule
 
