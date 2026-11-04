@@ -89,14 +89,21 @@ uses three measures:
 
 - **Sentence-length spread:** the standard deviation of words per sentence
   divided by the mean. Low spread is flipped to mean more AI-like.
-- **Type-token ratio:** unique words over total words, on a fixed-size window
-  so length doesn't decide it. Low variety is flipped to mean more AI-like.
-- **Punctuation density:** non-full-stop punctuation (`, ; : — ( ) ! ? "`)
+- **Type-token ratio:** unique words over total words, averaged over 50-word
+  windows so length doesn't decide it. **High** variety counts as more
+  AI-like. That's the opposite of what I expected. On my calibration inputs
+  the AI texts scored 0.94–0.96 and the human ones 0.72–0.86, because
+  generated prose reaches for a fresh word every time while people repeat
+  "I", "the" and "and". Six texts is thin evidence for flipping a measure, so
+  it's the first thing I'll recheck against my own writing.
+- **Punctuation density:** non-full-stop punctuation (`, ; : — – ( ) ! ? "`)
   per 100 words, plus how many distinct kinds appear. Low density and variety
   are flipped to mean more AI-like.
 
-Each measure is clipped, scaled to 0–1 and averaged into `style_score`, where
-higher means more AI-like, the same direction as signal one.
+Each measure is mapped linearly onto 0–1 between two fixed ends (in
+`stylometry._SCALES`), clipped, and the three are averaged with equal weight
+into `style_score`. Higher means more AI-like, the same direction as signal
+one.
 
 **Why that might differ between human and AI writing:** Generated prose tends
 toward even, mid-length sentences, safe vocabulary and regular punctuation,
@@ -106,12 +113,14 @@ a sentence of about 40, and uses dashes, a colon and quotation marks.
 
 **What it can't see:** Meaning. It has no idea what the text says, so any
 edit that changes the shape without changing the substance moves it.
-Splitting sentences, adding a fragment, inserting typos (which raise
-type-token ratio) or pasting a quotation all push the score toward human, and
-all of them are cheap to do on purpose. It also shares signal one's blind
-spot. Plain writing has even sentence lengths, repeated simple words and only
-full stops, so the writer signal one wrongly accuses is likely to be accused
-here too, and the two signals agree when they're wrong. Short texts are noise:
+Splitting sentences, adding a fragment, sprinkling in dashes and semicolons,
+or pasting a quotation all push the score toward human, and all of them are
+cheap to do on purpose. (Typos raise type-token ratio, which my direction
+reads as *more* AI-like, so that one attack partly backfires here, though it
+still works on signal one.) It also shares signal one's blind spot. Plain
+writing has even sentence lengths and only full stops, so the writer signal
+one wrongly accuses is accused here too: `samples/plain_human.json` scored
+0.69 on style. When they're wrong, the two signals agree. Short texts are noise:
 one sentence has no spread at all. And because modern chat models use em
 dashes heavily, "varied punctuation means human" may already be out of date.
 
@@ -120,9 +129,53 @@ dashes heavily, "varied punctuation means human" may already be out of date.
 <!-- Write the rule in words, then give the numbers. What happens when the two
      signals disagree? -->
 
-**The rule:**
+**The rule:** A text is only as AI-like as its *least* AI-like signal. The
+combined score is the lower of the two signal scores. When they disagree, the
+one that reads more human wins, so neither signal can put a text in the AI
+band on its own. Both have to be fooled at once.
 
-**The numbers:**
+I didn't use a weighted average because of one measurement. A plainly written
+human paragraph scored **0.794** on the model signal, higher than the
+clearly-AI sample's **0.754**. Any weighting that leans on the model signal
+accuses that writer before it catches the AI. The cost is the other way
+round: AI text that fools *either* signal drops out of the AI band. I chose
+missed detections over wrong accusations.
+
+**The numbers:** `combined = min(model_score, style_score)`, with no weights
+(`WEIGHT_*` in `config.py` is left unused). Thresholds (provisional, to be
+tested in Milestone 5): `HUMAN_THRESHOLD = 0.35`, `AI_THRESHOLD = 0.72`.
+
+The calibration inputs (all in `samples/`) through `/submit`:
+
+| Input | `model_score` | `style_score` | combined | Band |
+|---|---|---|---|---|
+| `clearly_ai` | 0.7544 | 0.8113 | 0.7544 | AI |
+| `lightly_edited_ai` | 0.6738 | 0.7600 | 0.6738 | unsure |
+| `plain_human` | 0.7936 | 0.6905 | 0.6905 | unsure |
+| `formal_human` | 0.4929 | 0.3425 | 0.3425 | human |
+| `borderline` | 0.2925 | 0.5161 | 0.2925 | human |
+| `clearly_human` | 0.3923 | 0.1232 | 0.1232 | human |
+
+`clearly_human`, `clearly_ai` and `borderline` came with the starter. I wrote
+`formal_human`, `plain_human` and `lightly_edited_ai` as stand-ins: they
+aren't real submissions. `lightly_edited_ai` is `clearly_ai` with
+contractions and plainer words swapped in.
+
+What surprised me, and which signal was off:
+
+- **Lightly-edited AI escapes to unsure.** A few contractions and plainer
+  words dropped the *model* signal from 0.754 to 0.674. Style barely moved
+  (0.811 → 0.760), because the edits didn't change the shape. Under `min()`
+  the weaker signal decides, so the text drops out of the AI band. That's the
+  trade working as designed, and it's also an evasion that cost me five
+  minutes.
+- **The plain writer is protected by 0.03.** `plain_human` combines to 0.691
+  against an AI threshold of 0.72. It's out of the AI band, but only because
+  style read it slightly more human than the model did. A plainer paragraph
+  could cross.
+- **Formal human prose sits right on the human threshold.** It combines to
+  0.343, just under 0.35. The model signal (0.493) was the hesitant one,
+  because formal prose is still fairly predictable to gpt2.
 
 **Where it lives:** `scoring.py::combine_signals`
 
@@ -130,6 +183,18 @@ dashes heavily, "varied punctuation means human" may already be out of date.
      somewhere else, say where. -->
 
 **A case where my two signals split, and what my rule does with it:**
+
+`samples/borderline.json`, the time-management paragraph in casual British
+English. The model signal says human (**0.2925**): words like "frazzled",
+"wreck" and "genuinely" surprise gpt2. Style leans AI (**0.5161**): sentence
+lengths are fairly even (spread 0.47) and the vocabulary is varied (TTR
+0.86), and only its dashes and semicolon pull it back toward human. That's a
+0.22 gap. `min()` takes the model's 0.2925, so it lands in **human**.
+
+A weighted average would have given 0.40, which is unsure. My rule settles a
+split in the writer's favour every time. On this text that's probably right.
+On an AI text someone has salted with rare words, it's the hole the attack set
+will go through.
 
 
 

@@ -51,12 +51,22 @@ def combine_signals(model_score: float, style_score: float) -> float:
 
     The weights in config.py are placeholders. Change them, or ignore them and
     write a different rule.
+
+    My rule: **a text is only as AI-like as its least AI-like signal.** The
+    combined score is the lower of the two. When they disagree, the one that
+    reads more human wins, so neither signal can push a text into the AI band
+    on its own.
+
+    Why not a weighted average: a plainly written human paragraph scored
+    0.794 on the model signal, higher than the clearly-AI sample's 0.754.
+    Any weighting that leans on the model signal accuses that writer first.
+    Taking the minimum means both signals have to be fooled at once.
+
+    What it costs: AI text that fools *either* signal — rare words for the
+    model, chopped-up sentences for style — drops out of the AI band. That's
+    the trade I chose: missed detections over wrong accusations.
     """
-    # TODO: replace this
-    return (
-        config.WEIGHT_MODEL_SIGNAL * model_score
-        + config.WEIGHT_STYLE_SIGNAL * style_score
-    )
+    return round(min(model_score, style_score), 4)
 
 
 def score_to_label(score: float) -> tuple[str, str]:

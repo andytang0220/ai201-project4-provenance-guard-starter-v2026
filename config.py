@@ -54,6 +54,10 @@ DETECTOR_MAX_TOKENS = 400
 # down BEFORE you code it, and to put the numbers in your README. Whatever you
 # decide, it goes here.
 
+#
+# Not used by my rule. `scoring.combine_signals` takes the LOWER of the two
+# signals instead of a weighted average — see its docstring and the README.
+# Left here so nothing that imports them breaks.
 WEIGHT_MODEL_SIGNAL = 0.5
 WEIGHT_STYLE_SIGNAL = 0.5
 
@@ -71,8 +75,13 @@ WEIGHT_STYLE_SIGNAL = 0.5
 # getting through. There is no setting that avoids the trade — only settings
 # that decide who pays for it.
 
+#
+# Provisional, from Milestone 4's calibration inputs under the min() rule:
+# clearly AI combines to 0.754, plain human writing to 0.691, lightly-edited
+# AI to 0.674. 0.72 keeps the plain writer out of the AI band with a margin
+# of 0.03 — thin, and Milestone 5 is where this gets tested properly.
 HUMAN_THRESHOLD = 0.35
-AI_THRESHOLD = 0.65
+AI_THRESHOLD = 0.72
 
 # ⚠️ One thing that catches people out in Milestone 5. A weighted average can
 # only land between its two inputs — so while `style_signal` is still the stub

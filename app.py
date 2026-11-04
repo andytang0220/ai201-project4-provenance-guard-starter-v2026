@@ -30,6 +30,7 @@ from flask import Flask, jsonify, request
 
 import audit
 import config
+import scoring
 import stylometry
 
 app = Flask(__name__)
@@ -236,7 +237,12 @@ def submit():
         # The word check above should catch this first; this is the backstop.
         return _reject(creator_id, "text_too_short", "Text is too short to score.")
 
-    # Placeholders until Milestones 4 and 5.
+    # Milestone 4 - the second signal, tested first with
+    # python stylometry.py "some text", then the combining rule.
+    style_score = stylometry.style_signal(text)
+    combined_score = scoring.combine_signals(model_score, style_score)
+
+    # Placeholders until Milestone 5.
     guess = "unsure"
     label = "not built yet"
 
@@ -248,6 +254,8 @@ def submit():
         creator_id=creator_id,
         guess=guess,
         model_score=model_score,
+        style_score=style_score,
+        combined_score=combined_score,
         label=label,
         status="decided",
     )
@@ -256,10 +264,10 @@ def submit():
         "content_id": content_id,
         "creator_id": creator_id,
         "guess": guess,
-        "confidence": model_score,
+        "confidence": combined_score,
         "label": label,
         "model_score": model_score,
-        "style_score": None,
+        "style_score": style_score,
         "status": "decided",
     }), 200
 
